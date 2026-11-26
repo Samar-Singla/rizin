@@ -744,7 +744,44 @@ bool test_rz_io_boundaries(void) {
 	mu_end;
 }
 
+bool test_rz_io_extend_at(void) {
+	const size_t sizes[] = { 16, 255, 256, 257, 300, 512, 600 };
+	const size_t insert_sizes[] = { 0, 4, 300 };
+	ut8 original[600];
+	ut8 actual[900];
+	ut8 expected[900];
+	for (size_t i = 0; i < sizeof(original); i++) {
+		original[i] = i % 251;
+	}
+	for (size_t i = 0; i < RZ_ARRAY_SIZE(sizes); i++) {
+		size_t length = sizes[i];
+		const size_t offsets[] = { 0, length / 2, length };
+		for (size_t j = 0; j < RZ_ARRAY_SIZE(offsets); j++) {
+			for (size_t k = 0; k < RZ_ARRAY_SIZE(insert_sizes); k++) {
+				size_t offset = offsets[j];
+				size_t inserted = insert_sizes[k];
+				RzIO *io = rz_io_new();
+				mu_assert_notnull(io, "create IO");
+				RzIODesc *desc = rz_io_open(io, "malloc://1", RZ_PERM_RW, 0);
+				mu_assert_notnull(desc, "open buffer");
+				mu_assert_true(rz_io_resize(io, length), "resize buffer");
+				mu_assert_eq(rz_io_pwrite_at(io, 0, original, length), length, "write original");
+				memcpy(expected, original, offset);
+				memset(expected + offset, 0, inserted);
+				memcpy(expected + offset + inserted, original + offset, length - offset);
+				mu_assert_true(rz_io_extend_at(io, offset, inserted), "insert bytes");
+				mu_assert_eq(rz_io_desc_size(desc), length + inserted, "exact resulting size");
+				mu_assert_eq(rz_io_pread_at(io, 0, actual, length + inserted), length + inserted, "read result");
+				mu_assert_memeq(actual, expected, length + inserted, "preserve bytes around insertion");
+				rz_io_free(io);
+			}
+		}
+	}
+	mu_end;
+}
+
 bool all_tests(void) {
+	mu_run_test(test_rz_io_extend_at);
 	mu_run_test(test_rz_io_read_at_mapped);
 	mu_run_test(test_rz_io_nread_at);
 	mu_run_test(test_rz_io_cache);

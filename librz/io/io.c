@@ -522,30 +522,29 @@ RZ_API bool rz_io_extend_at(RzIO *io, ut64 addr, ut64 size) {
 		return false;
 	}
 
-	// Shift old data to make space for the zero bytes
-	ut64 tmp = cur_size >= IO_EXTEND_BLOCK_SZ ? RZ_MAX(cur_size - IO_EXTEND_BLOCK_SZ, addr) : addr;
+	// Copy backward so overlapping source bytes are read before being overwritten.
+	ut8 buffer[IO_EXTEND_BLOCK_SZ];
 	ut64 remaining = cur_size - addr;
-
-	ut8 *buffer = RZ_NEWS(ut8, IO_EXTEND_BLOCK_SZ);
-	if (!buffer) {
-		return false;
-	}
 	while (remaining) {
-		int sz = rz_io_pread_at(io, tmp, buffer, IO_EXTEND_BLOCK_SZ);
-		rz_io_pwrite_at(io, tmp + size, buffer, sz);
-
-		tmp = tmp - IO_EXTEND_BLOCK_SZ > addr ? tmp - IO_EXTEND_BLOCK_SZ : addr;
-		remaining = remaining > sz ? remaining - sz : 0;
+		int chunk = RZ_MIN(remaining, sizeof(buffer));
+		ut64 source = addr + remaining - chunk;
+		if (rz_io_pread_at(io, source, buffer, chunk) != chunk ||
+			rz_io_pwrite_at(io, source + size, buffer, chunk) != chunk) {
+			return false;
+		}
+		remaining -= chunk;
 	}
-	free(buffer);
 
-	// Put the zero bytes at the right place
-	ut8 *empty = RZ_NEWS0(ut8, size);
-	if (!empty) {
-		return false;
+	// Fill the inserted range without allocating a buffer proportional to its size.
+	memset(buffer, 0, sizeof(buffer));
+	remaining = size;
+	while (remaining) {
+		int chunk = RZ_MIN(remaining, sizeof(buffer));
+		if (rz_io_pwrite_at(io, addr + size - remaining, buffer, chunk) != chunk) {
+			return false;
+		}
+		remaining -= chunk;
 	}
-	rz_io_pwrite_at(io, addr, empty, size);
-	free(empty);
 
 	return true;
 #undef IO_EXTEND_BLOCK_SZ
